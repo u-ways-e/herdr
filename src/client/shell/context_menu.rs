@@ -1,4 +1,5 @@
 use super::*;
+use crate::workspace::color::SWATCHES;
 
 impl ClientContextMenuOverlay {
     pub(super) fn items(&self) -> Vec<ClientContextMenuItem> {
@@ -6,9 +7,11 @@ impl ClientContextMenuOverlay {
 
         let item = |label, action| ClientContextMenuItem { label, action };
         match &self.target {
-            ClientContextMenuTarget::Workspace { is_git: false, .. } => {
-                vec![item("Rename", Action::Rename), item("Close", Action::Close)]
-            }
+            ClientContextMenuTarget::Workspace { is_git: false, .. } => vec![
+                item("Rename", Action::Rename),
+                item("Close", Action::Close),
+                item("Color...", Action::Color),
+            ],
             ClientContextMenuTarget::Workspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
@@ -16,6 +19,7 @@ impl ClientContextMenuOverlay {
             } => vec![
                 item("Rename", Action::Rename),
                 item("Close", Action::Close),
+                item("Color...", Action::Color),
                 item("New worktree", Action::NewWorktree),
                 item("Open worktree...", Action::OpenWorktree),
             ],
@@ -25,6 +29,7 @@ impl ClientContextMenuOverlay {
             } => vec![
                 item("Rename", Action::Rename),
                 item("Close", Action::Close),
+                item("Color...", Action::Color),
                 item("Delete worktree checkout...", Action::RemoveWorktree),
             ],
             ClientContextMenuTarget::Workspace {
@@ -38,6 +43,7 @@ impl ClientContextMenuOverlay {
                     if *close_group { "Close group" } else { "Close" },
                     Action::Close,
                 ),
+                item("Color...", Action::Color),
                 item("New worktree", Action::NewWorktree),
                 item("Open worktree...", Action::OpenWorktree),
                 item(
@@ -45,6 +51,17 @@ impl ClientContextMenuOverlay {
                     Action::ToggleGroup,
                 ),
             ],
+            ClientContextMenuTarget::WorkspaceColor { current, .. } => {
+                let mut items = (0u8..)
+                    .zip(SWATCHES)
+                    .map(|(index, (name, _))| item(name, Action::SetColor(index)))
+                    .collect::<Vec<_>>();
+                items.push(item("Random", Action::RandomColor));
+                if current.is_some() {
+                    items.push(item("Clear", Action::ClearColor));
+                }
+                items
+            }
             ClientContextMenuTarget::Tab { .. } => vec![
                 item("New tab", Action::NewTab),
                 item("Rename", Action::Rename),
@@ -196,7 +213,17 @@ impl ClientShellState {
                 workspace_id,
                 close_group,
                 ..
-            } => self.activate_workspace_context_action(workspace_id, close_group, action, outcome),
+            } => self.activate_workspace_context_action(
+                workspace_id,
+                close_group,
+                menu.x,
+                menu.y,
+                action,
+                outcome,
+            ),
+            ClientContextMenuTarget::WorkspaceColor { workspace_id, .. } => {
+                self.activate_workspace_color_action(workspace_id, action, outcome)
+            }
             ClientContextMenuTarget::Tab {
                 tab_id,
                 workspace_id,
@@ -223,6 +250,8 @@ impl ClientShellState {
         &mut self,
         workspace_id: String,
         close_group: bool,
+        x: u16,
+        y: u16,
         action: ClientContextMenuAction,
         outcome: &mut ClientShellInput,
     ) {
@@ -251,6 +280,31 @@ impl ClientShellState {
             ClientContextMenuAction::Close => {
                 self.request_workspace_close(workspace_id, Some(close_group), outcome);
             }
+            ClientContextMenuAction::Color => {
+                let current = self.snapshot.as_deref().and_then(|snapshot| {
+                    snapshot
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.workspace_id == workspace_id)
+                        .map(workspace_accent)
+                });
+                if let Some(current) = current {
+                    let highlighted = SWATCHES
+                        .iter()
+                        .position(|&(_, swatch)| Some(swatch) == current)
+                        .unwrap_or(0);
+                    self.overlay =
+                        Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+                            target: ClientContextMenuTarget::WorkspaceColor {
+                                workspace_id,
+                                current,
+                            },
+                            x,
+                            y,
+                            highlighted,
+                        }));
+                }
+            }
             ClientContextMenuAction::NewWorktree => {
                 self.begin_worktree_action_for(KeybindAction::NewWorktree, workspace_id, outcome)
             }
@@ -277,6 +331,34 @@ impl ClientShellState {
             }
             _ => {}
         }
+    }
+
+    fn activate_workspace_color_action(
+        &mut self,
+        workspace_id: String,
+        action: ClientContextMenuAction,
+        outcome: &mut ClientShellInput,
+    ) {
+        let color = match action {
+            ClientContextMenuAction::SetColor(index) => {
+                let Some(&(_, swatch)) = SWATCHES.get(usize::from(index)) else {
+                    return;
+                };
+                Some(swatch.to_hex())
+            }
+            ClientContextMenuAction::RandomColor => Some("random".to_owned()),
+            ClientContextMenuAction::ClearColor => None,
+            _ => return,
+        };
+        self.push_endpoint_method(
+            crate::api::schema::Method::WorkspaceSetColor(
+                crate::api::schema::WorkspaceSetColorParams {
+                    workspace_id,
+                    color,
+                },
+            ),
+            outcome,
+        );
     }
 
     fn activate_tab_context_action(

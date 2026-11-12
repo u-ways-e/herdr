@@ -852,6 +852,92 @@ fn sidebar_renders_local_and_saved_ssh_endpoints_with_status() {
 }
 
 #[test]
+fn machine_sidebar_marks_each_endpoint_workspace_with_its_color() {
+    use ratatui::style::Color;
+
+    let teal = Color::Rgb(0x59, 0xd4, 0xcd);
+    let rose = Color::Rgb(0xfc, 0xa0, 0xa7);
+    let (mut state, remote_id) = state_with_remote();
+    let overlay0 = state.config.palette.overlay0;
+    let mut local = state.snapshot.as_deref().expect("local snapshot").clone();
+    local.workspaces[0].color = Some("#59d4cd".into());
+    local.agents = vec![agent("local agent", AgentStatus::Idle, 1)];
+    state.set_snapshot(Box::new(local));
+    let mut remote = snapshot();
+    remote.boot_id = "remote-boot".into();
+    remote.workspaces[0].label = "remote-workspace".into();
+    remote.workspaces[0].color = Some("#fca0a7".into());
+    remote.agents = vec![agent("remote agent", AgentStatus::Idle, 1)];
+    state.set_endpoint_snapshot(&remote_id, Box::new(remote));
+    let workspace_rect = |state: &ClientShellState, local: bool| {
+        state
+            .hits
+            .workspaces
+            .iter()
+            .find(|hit| hit.endpoint_id.is_local() == local)
+            .expect("machine workspace row")
+            .rect
+    };
+
+    let frame = state.compose(100, 28).expect("expanded machines sidebar");
+    let buffer = frame.to_ratatui_buffer().expect("expanded machines buffer");
+    for (local, color) in [(true, teal), (false, rose)] {
+        let rect = workspace_rect(&state, local);
+        // Machine rows nest workspaces two columns in.
+        for y in rect.y..rect.bottom() {
+            let cell = &buffer[(rect.x + 2, y)];
+            assert_eq!((cell.symbol(), cell.fg), ("▌", color));
+        }
+    }
+
+    let agent_cells = |state: &ClientShellState, buffer: &Buffer, local: bool| {
+        let rect = state
+            .hits
+            .endpoint_agents
+            .iter()
+            .find(|(_, endpoint_id, _)| endpoint_id.is_local() == local)
+            .expect("collapsed machine agent row")
+            .0;
+        (
+            buffer[(rect.x, rect.y)].clone(),
+            buffer[(rect.x + 1, rect.y)].clone(),
+        )
+    };
+
+    state.sidebar_collapsed = true;
+    let frame = state.compose(100, 28).expect("collapsed machines sidebar");
+    let buffer = frame
+        .to_ratatui_buffer()
+        .expect("collapsed machines buffer");
+    let idle = status_color(AgentStatus::Idle, &state.config.palette);
+    for (local, color) in [(true, teal), (false, rose)] {
+        let rect = workspace_rect(&state, local);
+        let cell = &buffer[(rect.x, rect.y)];
+        assert_eq!((cell.symbol(), cell.fg), ("▌", color));
+        // The machine initial takes the workspace color; the status icon keeps its own.
+        let (initial, icon) = agent_cells(&state, &buffer, local);
+        assert_eq!((initial.fg, icon.fg), (color, idle));
+    }
+
+    // Offline machines grey the marker and agent initial in both layouts.
+    state.set_endpoint_status(&remote_id, ClientEndpointStatus::Reconnecting);
+    for collapsed in [false, true] {
+        state.sidebar_collapsed = collapsed;
+        let frame = state.compose(100, 28).expect("offline machine sidebar");
+        let buffer = frame.to_ratatui_buffer().expect("offline machine buffer");
+        let rect = workspace_rect(&state, false);
+        let cell = &buffer[(rect.x + if collapsed { 0 } else { 2 }, rect.y)];
+        assert_eq!((cell.symbol(), cell.fg), ("▌", overlay0), "{collapsed}");
+        assert!(cell.modifier.contains(Modifier::DIM), "{collapsed}");
+        if collapsed {
+            let (initial, _) = agent_cells(&state, &buffer, false);
+            assert_eq!(initial.fg, overlay0);
+            assert!(initial.modifier.contains(Modifier::DIM));
+        }
+    }
+}
+
+#[test]
 fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
     fn add_worktree_group(snapshot: &mut ClientShellSnapshot, parent_id: &str, child_id: &str) {
         snapshot.workspaces[0].workspace_id = parent_id.into();

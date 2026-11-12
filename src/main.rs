@@ -344,6 +344,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
 # accent = "cyan"
 
+# Give each newly created workspace the least-used color swatch. Existing
+# workspaces are left alone; color them with `herdr workspace color`.
+# auto_workspace_colors = false
+
 # Expanded agent rows. Built-ins are state_icon, state_text, machine, workspace, tab,
 # pane, agent, terminal_title, and terminal_title_stripped.
 # Custom values reported through pane metadata use a $name token.
@@ -819,6 +823,18 @@ mod tests {
         let sidebar = DEFAULT_CONFIG.find("# [ui.sidebar.agents]").unwrap();
 
         assert!(accent < sidebar);
+    }
+
+    #[test]
+    fn default_config_lists_ui_auto_workspace_colors_before_nested_tables() {
+        let marker = "# auto_workspace_colors = false";
+        assert_eq!(DEFAULT_CONFIG.matches(marker).count(), 1);
+
+        let auto_colors = DEFAULT_CONFIG.find(marker).unwrap();
+        let accent = DEFAULT_CONFIG.find("# accent = \"cyan\"").unwrap();
+        let sidebar = DEFAULT_CONFIG.find("# [ui.sidebar.agents]").unwrap();
+
+        assert!(accent < auto_colors && auto_colors < sidebar);
     }
 
     #[test]

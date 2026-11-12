@@ -577,6 +577,7 @@ fn render_pane_borders(
     }
     add_split_border_cells(app.pane_gaps, split_borders, &mut cells);
 
+    let focused_color = focused_border_color(app, ws);
     let buf = frame.buffer_mut();
     let area = buf.area;
     for ((x, y), line) in cells {
@@ -597,7 +598,7 @@ fn render_pane_borders(
         let cell = &mut buf[(x, y)];
         cell.set_symbol(symbol);
         let color = if focused {
-            app.palette.accent
+            focused_color
         } else {
             app.palette.overlay0
         };
@@ -605,6 +606,12 @@ fn render_pane_borders(
     }
 
     render_pane_border_titles(app, ws, pane_infos, frame);
+}
+
+/// The rendered workspace's own color, else the theme accent.
+fn focused_border_color(app: &AppState, ws: &crate::workspace::Workspace) -> Color {
+    ws.color
+        .map_or(app.palette.accent, |color| color.foreground(&app.palette))
 }
 
 fn add_split_border_cells(
@@ -735,6 +742,7 @@ fn render_pane_border_titles(
     pane_infos: &[PaneInfo],
     frame: &mut Frame,
 ) {
+    let focused_color = focused_border_color(app, ws);
     let buf = frame.buffer_mut();
     let area = buf.area;
     for info in pane_infos {
@@ -764,7 +772,7 @@ fn render_pane_border_titles(
             continue;
         }
         let color = if info.is_focused {
-            app.palette.accent
+            focused_color
         } else {
             app.palette.overlay0
         };
@@ -869,14 +877,7 @@ fn selection_palette_background(p: &Palette) -> Color {
 
 fn selection_fg_for_bg(bg: Color, p: &Palette) -> Color {
     if let Color::Rgb(r, g, b) = bg {
-        let luminance = relative_luminance((r, g, b));
-        let black_contrast = (luminance + 0.05) / 0.05;
-        let white_contrast = 1.05 / (luminance + 0.05);
-        return if black_contrast > white_contrast {
-            Color::Rgb(0, 0, 0)
-        } else {
-            Color::Rgb(255, 255, 255)
-        };
+        return contrast_fg_for_rgb((r, g, b));
     }
 
     color_to_rgb(bg)
@@ -888,6 +889,28 @@ fn selection_fg_for_bg(bg: Color, p: &Palette) -> Color {
             }
         })
         .unwrap_or_else(|| panel_contrast_fg(p))
+}
+
+/// Black or white, whichever has the higher WCAG contrast against `bg`.
+pub(crate) fn contrast_fg_for_rgb(bg: Rgb) -> Color {
+    let luminance = relative_luminance(bg);
+    let black_contrast = (luminance + 0.05) / 0.05;
+    let white_contrast = 1.05 / (luminance + 0.05);
+    if black_contrast > white_contrast {
+        Color::Rgb(0, 0, 0)
+    } else {
+        Color::Rgb(255, 255, 255)
+    }
+}
+
+/// `color` as text or a glyph on the palette background: unchanged on dark
+/// palettes, mixed toward black on light ones so light colors stay legible.
+pub(crate) fn foreground_on_palette(color: Rgb, palette: &Palette) -> Color {
+    let (r, g, b) = match color_to_rgb(palette.panel_bg) {
+        Some(background) if relative_luminance(background) >= 0.5 => mix_rgb(color, (0, 0, 0), 0.4),
+        _ => color,
+    };
+    Color::Rgb(r, g, b)
 }
 
 fn mix_rgb(base: Rgb, target: Rgb, amount: f32) -> Rgb {
@@ -1304,6 +1327,73 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(1, 1)].style().fg, Some(app.palette.accent));
         assert_eq!(buffer[(2, 1)].style().fg, Some(app.palette.overlay0));
+    }
+
+    #[test]
+    fn focused_pane_border_and_title_use_the_workspace_color() {
+        let mut app = AppState::test_new();
+        app.pane_gaps = true;
+        app.view.terminal_area = Rect::new(0, 0, 16, 3);
+        let mut ws = Workspace::test_new("test");
+        let focused = ws.tabs[0].root_pane;
+        let unfocused = ws.test_split(ratatui::layout::Direction::Horizontal);
+        app.view.pane_infos = [(focused, 0), (unfocused, 8)]
+            .into_iter()
+            .map(|(id, x)| PaneInfo {
+                id,
+                rect: Rect::new(x, 0, 8, 3),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::ALL,
+                is_focused: id == focused,
+            })
+            .collect();
+        for pane_id in [focused, unfocused] {
+            let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+            let mut terminal = TerminalState::new(terminal_id.clone(), "/tmp".into());
+            terminal.set_manual_label("job".into());
+            app.terminals.insert(terminal_id, terminal);
+        }
+        let render = |ws: &Workspace| {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(16, 3)).unwrap();
+            terminal
+                .draw(|frame| render_view_pane_borders(&app, ws, &[], frame))
+                .unwrap();
+            terminal.backend().buffer().clone()
+        };
+
+        // Without a workspace color the focused pane keeps the theme accent.
+        let buffer = render(&ws);
+        assert_eq!(buffer[(0, 1)].style().fg, Some(app.palette.accent));
+        assert_eq!(buffer[(2, 0)].style().fg, Some(app.palette.accent));
+
+        ws.color = crate::workspace::color::WorkspaceColor::parse("teal");
+        let teal = Color::Rgb(0x59, 0xd4, 0xcd);
+        let buffer = render(&ws);
+        assert_eq!(buffer[(0, 1)].symbol(), "│");
+        assert_eq!(buffer[(0, 1)].style().fg, Some(teal));
+        assert_eq!(buffer[(2, 0)].symbol(), "j");
+        assert_eq!(buffer[(2, 0)].style().fg, Some(teal));
+        assert_eq!(buffer[(8, 1)].style().fg, Some(app.palette.overlay0));
+        assert_eq!(buffer[(10, 0)].symbol(), "j");
+        assert_eq!(buffer[(10, 0)].style().fg, Some(app.palette.overlay0));
+
+        // Light themes darken the color so the focused border stays the strongest.
+        app.palette = Palette::catppuccin_latte();
+        let render = |ws: &Workspace| {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(16, 3)).unwrap();
+            terminal
+                .draw(|frame| render_view_pane_borders(&app, ws, &[], frame))
+                .unwrap();
+            terminal.backend().buffer().clone()
+        };
+        let buffer = render(&ws);
+        let light_teal = ws.color.unwrap().foreground(&app.palette);
+        assert_ne!(light_teal, teal);
+        assert_eq!(buffer[(0, 1)].style().fg, Some(light_teal));
+        assert_eq!(buffer[(2, 0)].style().fg, Some(light_teal));
     }
 
     #[tokio::test]

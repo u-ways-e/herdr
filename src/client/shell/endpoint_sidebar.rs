@@ -172,6 +172,14 @@ pub(super) fn render_collapsed(
                     })
                     .add_modifier(dim),
             );
+            paint_accent_marker(buffer, rect, workspace_accent(workspace), palette);
+            if stale {
+                // Offline machines grey the marker, as the expanded sidebar does.
+                buffer.set_style(
+                    Rect::new(rect.x, rect.y, rect.width.min(1), 1),
+                    Style::default().fg(palette.overlay0),
+                );
+            }
             put_text(
                 buffer,
                 rect.x.saturating_add(number_width),
@@ -481,6 +489,7 @@ pub(super) fn render_expanded(
                     false,
                     palette,
                 );
+                paint_accent_marker(buffer, nested, workspace_accent(workspace), palette);
                 if endpoint.status != ClientEndpointStatus::Online {
                     buffer.set_style(
                         rect,

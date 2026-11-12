@@ -168,10 +168,20 @@ pub(crate) fn render_context_menu(
     palette: &Palette,
 ) -> Option<OverlayRender> {
     let items = menu.items();
+    let current_color = match &menu.target {
+        ClientContextMenuTarget::WorkspaceColor { current, .. } => *current,
+        _ => None,
+    };
+    let swatch = |action| match action {
+        ClientContextMenuAction::SetColor(index) => crate::workspace::color::SWATCHES
+            .get(usize::from(index))
+            .map(|&(_, color)| color),
+        _ => None,
+    };
     let screen = buffer.area;
     let max_item_width = items
         .iter()
-        .map(|item| display_width(item.label))
+        .map(|item| display_width(item.label) + u16::from(swatch(item.action).is_some()) * 2)
         .max()
         .unwrap_or(0);
     let width = max_item_width
@@ -199,16 +209,48 @@ pub(crate) fn render_context_menu(
         }
         let row = Rect::new(inner.x, row_y, inner.width, 1);
         let highlighted = index == menu.highlighted;
-        let style = if highlighted {
-            Style::default()
+        let style = match swatch(item.action) {
+            // A highlighted swatch previews its own color instead of the theme accent.
+            Some(color) if highlighted => Style::default()
+                .fg(color.contrast_fg())
+                .bg(color.to_ratatui())
+                .add_modifier(Modifier::BOLD),
+            _ if highlighted => Style::default()
                 .fg(panel_contrast_fg(palette))
                 .bg(palette.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(palette.text).bg(palette.panel_bg)
+                .add_modifier(Modifier::BOLD),
+            _ => Style::default().fg(palette.text).bg(palette.panel_bg),
         };
         buffer.set_style(row, style);
-        put_text(buffer, row.x, row.y, row.width, item.label, style);
+        if let Some(color) = swatch(item.action) {
+            put_text(
+                buffer,
+                row.x,
+                row.y,
+                row.width.min(2),
+                "● ",
+                if highlighted {
+                    style
+                } else {
+                    style.fg(color.foreground(palette))
+                },
+            );
+            let check = if current_color == Some(color) {
+                " ✓"
+            } else {
+                ""
+            };
+            put_text(
+                buffer,
+                row.x.saturating_add(2),
+                row.y,
+                row.width.saturating_sub(2),
+                &format!("{}{check}", item.label),
+                style,
+            );
+        } else {
+            put_text(buffer, row.x, row.y, row.width, item.label, style);
+        }
         rows.push((row, index));
     }
     Some(OverlayRender {

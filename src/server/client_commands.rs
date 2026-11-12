@@ -49,6 +49,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "workspace.move",
     "workspace.move_block",
     "workspace.rename",
+    "workspace.set_color",
     "worktree.create",
     "worktree.list",
     "worktree.open",
@@ -296,6 +297,10 @@ mod tests {
         assert_eq!(
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
+        );
+        assert_eq!(
+            actual.remove("workspace.set_color").as_deref(),
+            Some("c98bdc839482214b1402898745bccd97cbcf0e2911643cb932802be98a9229cc")
         );
 
         assert_eq!(

@@ -295,6 +295,24 @@ mod tests {
     }
 
     #[test]
+    fn workspace_color_is_optional_snapshot_data() {
+        let mut snapshot: ClientShellSnapshot = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+        assert_eq!(snapshot.workspaces[0].color, None);
+
+        snapshot.workspaces[0].color = Some("#59d4cd".into());
+        let ServerMessage::EndpointControl { data, .. } = snapshot_message(&snapshot).unwrap()
+        else {
+            panic!("snapshot should use endpoint control");
+        };
+        let decoded: ClientShellSnapshot = serde_json::from_str(&data).unwrap();
+        assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
     fn snapshot_message_uses_named_json_control() {
         let snapshot = snapshot();
         let ServerMessage::EndpointControl { kind, data } = snapshot_message(&snapshot).unwrap()

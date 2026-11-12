@@ -158,6 +158,7 @@ herdr workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [
 herdr workspace get <workspace_id>
 herdr workspace focus <workspace_id>
 herdr workspace rename <workspace_id> <label>
+herdr workspace color <workspace_id> <#rrggbb|#rgb|NAME|random|none>
 herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]
 herdr workspace close <workspace_id> [--group]
 ```
@@ -169,6 +170,8 @@ herdr workspace create --cwd ~/project --label api --no-focus
 ```
 
 A workspace is a top-level project or work context. Creating one also creates its first tab and root pane. The JSON response exposes their IDs as `.result.workspace.workspace_id`, `.result.tab.tab_id`, and `.result.root_pane.pane_id`.
+
+`workspace color` sets the workspace's accent color. It accepts `#rrggbb` (the `#` is optional, which avoids shell quoting), `#rgb`, a swatch name (`rose`, `orange`, `yellow`, `green`, `teal`, `sky`, `violet`, `pink`), or `random`, which picks the swatch the other workspaces use least. `none` or `clear` removes the color. The color is saved with the session, shared by every attached client, and returned as lowercase `#rrggbb` in `.result.workspace.color`.
 
 ## Worktrees
 

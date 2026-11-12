@@ -11,6 +11,7 @@ use crate::layout::PaneId;
 #[cfg(test)]
 use crate::layout::{find_in_direction, NavDirection};
 use crate::terminal::{EffectiveStateChange, TerminalStateMutation};
+use crate::workspace::color::WorkspaceColor;
 use crate::workspace::WorkspaceGitStatus;
 
 use super::api_helpers::pane_agent_status;
@@ -568,6 +569,37 @@ impl AppState {
             .and_then(|id| self.workspaces.iter().position(|ws| ws.id == id))
             .unwrap_or(0);
         true
+    }
+
+    /// The swatch the workspaces use least, never `ws_idx`'s current color.
+    pub(crate) fn least_used_workspace_color(
+        &self,
+        ws_idx: usize,
+        seed: Option<u64>,
+    ) -> WorkspaceColor {
+        // `ws_idx`'s own color is the excluded one, so counting it changes nothing.
+        let used = self
+            .workspaces
+            .iter()
+            .filter_map(|workspace| workspace.color);
+        let current = self.workspaces.get(ws_idx).and_then(|ws| ws.color);
+        crate::workspace::color::least_used(used, current, seed)
+    }
+
+    /// Colors a newly created workspace when `ui.auto_workspace_colors` is on.
+    /// Ties resolve in palette order so the assignment is deterministic.
+    pub(crate) fn auto_assign_workspace_color(&mut self, ws_idx: usize) {
+        if !self.auto_workspace_colors {
+            return;
+        }
+        let color = self.least_used_workspace_color(ws_idx, None);
+        if let Some(workspace) = self
+            .workspaces
+            .get_mut(ws_idx)
+            .filter(|workspace| workspace.color.is_none())
+        {
+            workspace.color = Some(color);
+        }
     }
 
     pub(crate) fn terminal_ids_for_workspace(
@@ -2867,6 +2899,45 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["a", "b", "c"]
         );
+    }
+
+    #[test]
+    fn auto_workspace_colors_assign_least_used_swatch_deterministically() {
+        let color = |value| WorkspaceColor::parse(value);
+        let mut state = app_with_workspaces(&["a", "b", "c", "d"]);
+        state.workspaces[0].color = color("rose");
+        state.workspaces[1].color = color("yellow");
+
+        state.auto_assign_workspace_color(2);
+        assert_eq!(state.workspaces[2].color, None, "off by default");
+
+        state.auto_workspace_colors = true;
+        state.auto_assign_workspace_color(2);
+        assert_eq!(state.workspaces[2].color, color("orange"));
+        state.auto_assign_workspace_color(3);
+        assert_eq!(state.workspaces[3].color, color("green"));
+
+        // A workspace that already has a color keeps it.
+        state.workspaces[3].color = color("#123456");
+        state.auto_assign_workspace_color(3);
+        assert_eq!(state.workspaces[3].color, color("#123456"));
+    }
+
+    #[test]
+    fn least_used_workspace_color_never_repicks_the_current_color() {
+        let mut state = app_with_workspaces(&["a", "b"]);
+        state.workspaces[0].color = WorkspaceColor::parse("rose");
+        state.workspaces[1].color = WorkspaceColor::parse("orange");
+
+        assert_eq!(
+            state.least_used_workspace_color(1, None),
+            WorkspaceColor::parse("yellow").unwrap()
+        );
+        for seed in 0..16 {
+            let picked = state.least_used_workspace_color(1, Some(seed));
+            assert_ne!(Some(picked), state.workspaces[0].color);
+            assert_ne!(Some(picked), state.workspaces[1].color);
+        }
     }
 
     #[test]

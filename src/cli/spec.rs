@@ -217,6 +217,14 @@ fn workspace_command() -> Command {
                 .arg(required("label", "LABEL").num_args(1..)),
         )
         .subcommand(
+            Command::new("color")
+                .about("Set or clear a workspace color")
+                .arg(required("workspace_id", "WORKSPACE_ID"))
+                .arg(required("color", "COLOR").help(
+                    "#rrggbb, #rgb, a swatch name (rose, orange, yellow, green, teal, sky, violet, pink), random for the least-used swatch, or none to clear",
+                )),
+        )
+        .subcommand(
             Command::new("report-metadata")
                 .about("Report display-only workspace metadata")
                 .arg(required("workspace_id", "WORKSPACE_ID"))

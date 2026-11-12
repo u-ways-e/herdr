@@ -830,6 +830,8 @@ pub struct AppState {
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
     pub next_agent_state_change_seq: u64,
     pub confirm_close: bool,
+    /// Give newly created workspaces the least-used color swatch.
+    pub auto_workspace_colors: bool,
     pub pane_borders: crate::config::PaneBordersConfig,
     pub pane_outer_borders: bool,
     pub pane_scrollbars: bool,
@@ -1072,6 +1074,7 @@ impl AppState {
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
             next_agent_state_change_seq: 0,
             confirm_close: true,
+            auto_workspace_colors: false,
             pane_borders: crate::config::PaneBordersConfig::Auto,
             pane_outer_borders: true,
             pane_scrollbars: true,
@@ -1453,6 +1456,25 @@ mod tests {
                 palette.selection_bg, palette.active_row_bg,
                 "selection row shares the active row color for {name}"
             );
+        }
+    }
+
+    #[test]
+    fn built_in_themes_keep_workspace_colors_legible_as_text() {
+        for name in crate::config::THEME_NAMES
+            .iter()
+            .copied()
+            .filter(|name| *name != "terminal")
+        {
+            let palette = Palette::from_name(name).unwrap();
+            let muted = contrast_ratio(palette.overlay0, palette.panel_bg);
+            for (swatch, color) in crate::workspace::color::SWATCHES {
+                let contrast = contrast_ratio(color.foreground(&palette), palette.panel_bg);
+                assert!(
+                    contrast >= 3.0 && contrast > muted,
+                    "{swatch} text loses contrast for {name}: {contrast:.2}:1 (overlay0 {muted:.2}:1)"
+                );
+            }
         }
     }
 

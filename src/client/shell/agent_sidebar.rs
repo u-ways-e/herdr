@@ -14,6 +14,7 @@ pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
+    pub(super) accent: Option<WorkspaceColor>,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
 }
 
@@ -314,6 +315,7 @@ pub(super) fn agent_row(
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
         focused: agent.focused,
+        accent: workspace_accent(workspace),
         rows,
     })
 }
@@ -371,6 +373,7 @@ pub(super) fn render_agent_row(
             buffer,
         );
     }
+    paint_accent_marker(buffer, rect, row.accent, palette);
 }
 
 fn put_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {

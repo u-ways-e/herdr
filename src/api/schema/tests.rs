@@ -91,6 +91,37 @@ fn workspace_close_group_intent_defaults_false_and_round_trips() {
 }
 
 #[test]
+fn workspace_set_color_without_color_clears_and_round_trips() {
+    for params in [
+        serde_json::json!({ "workspace_id": "w1" }),
+        serde_json::json!({ "workspace_id": "w1", "color": null }),
+    ] {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id": "color",
+            "method": "workspace.set_color",
+            "params": params,
+        }))
+        .unwrap();
+        assert!(matches!(
+            request.method,
+            Method::WorkspaceSetColor(WorkspaceSetColorParams { color: None, .. })
+        ));
+    }
+
+    let request = Request {
+        id: "color".into(),
+        method: Method::WorkspaceSetColor(WorkspaceSetColorParams {
+            workspace_id: "w1".into(),
+            color: Some("random".into()),
+        }),
+    };
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "workspace.set_color");
+    assert_eq!(json["params"]["color"], "random");
+    assert_eq!(serde_json::from_value::<Request>(json).unwrap(), request);
+}
+
+#[test]
 fn agent_start_and_prompt_requests_round_trip() {
     let start = Request {
         id: "start".into(),
@@ -808,6 +839,7 @@ fn worktree_request_and_response_round_trip() {
                     checkout_path: "/worktrees/herdr/worktree-api".into(),
                     is_linked_worktree: true,
                 }),
+                color: None,
             },
             tab: TabInfo {
                 tab_id: "w_1:1".into(),
@@ -895,6 +927,7 @@ fn worktree_lifecycle_events_round_trip() {
             checkout_path: "/worktrees/herdr/worktree-api".into(),
             is_linked_worktree: true,
         }),
+        color: None,
     };
     let worktree = WorktreeInfo {
         path: "/worktrees/herdr/worktree-api".into(),

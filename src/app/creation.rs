@@ -147,6 +147,7 @@ impl App {
         self.state.terminals.insert(terminal.id.clone(), terminal);
         self.state.workspaces.push(ws);
         let idx = self.state.workspaces.len() - 1;
+        self.state.auto_assign_workspace_color(idx);
         self.state
             .remove_alias_shadowed_by_new_pane(self.state.workspaces[idx].tabs[0].root_pane);
         let workspace_id = self.state.workspaces[idx].id.clone();
@@ -409,6 +410,9 @@ impl App {
                     checkout_path: space.checkout_path.display().to_string(),
                     is_linked_worktree: space.is_linked_worktree,
                 }),
+            color: ws
+                .color
+                .map(crate::workspace::color::WorkspaceColor::to_hex),
         }
     }
 }

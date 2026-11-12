@@ -313,6 +313,8 @@ The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](
 
 `ui.pane_borders` accepts `"auto"` (the default, borders only for split panes), `"always"` (also frame a single pane), or `"off"`. A single-pane frame requires `ui.pane_outer_borders = true`, because all its edges are outer edges. Existing boolean values remain valid: `true` means `"auto"` and `false` means `"off"`.
 
+Each workspace can have an accent color, shown on its sidebar rows, its agents' rows, the active tab, the sidebar separator, and the focused pane border when one is drawn. Right-click a workspace and choose **Color...** to pick a swatch, a random one, or clear it, or run `herdr workspace color`. Set `ui.auto_workspace_colors = true` to give every newly created workspace the swatch the other workspaces use least. Restored and existing workspaces keep their current color.
+
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.
 
 Configure an ordered tmux-style status area at the right edge of the tab row:

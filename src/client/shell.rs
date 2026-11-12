@@ -66,6 +66,7 @@ use crate::protocol::{
 };
 #[cfg(test)]
 use crate::raw_input::RawInputEvent;
+use crate::workspace::color::WorkspaceColor;
 
 fn target_event_message(target: ClientInputTarget, event: ClientPaneInputEvent) -> ClientMessage {
     match target {
@@ -240,6 +241,38 @@ fn panel_contrast_fg(palette: &Palette) -> ratatui::style::Color {
     match palette.panel_bg {
         ratatui::style::Color::Reset => palette.surface_dim,
         color => color,
+    }
+}
+
+/// The workspace's accent color; a missing or invalid value draws no accent.
+fn workspace_accent(workspace: &ClientShellWorkspace) -> Option<WorkspaceColor> {
+    workspace.color.as_deref().and_then(WorkspaceColor::parse)
+}
+
+fn focused_workspace_accent(snapshot: &ClientShellSnapshot) -> Option<WorkspaceColor> {
+    let focused = snapshot.focused_workspace_id.as_deref()?;
+    snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == focused)
+        .and_then(workspace_accent)
+}
+
+/// Draws a `▌` accent bar down the first column of a sidebar row, keeping its background.
+fn paint_accent_marker(
+    buffer: &mut Buffer,
+    area: Rect,
+    accent: Option<WorkspaceColor>,
+    palette: &Palette,
+) {
+    let Some(accent) = accent.filter(|_| area.width > 0) else {
+        return;
+    };
+    let fg = accent.foreground(palette);
+    for y in area.y..area.bottom() {
+        if let Some(cell) = buffer.cell_mut((area.x, y)) {
+            cell.set_symbol("▌").set_fg(fg);
+        }
     }
 }
 

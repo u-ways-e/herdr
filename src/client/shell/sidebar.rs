@@ -75,14 +75,24 @@ pub(crate) fn render_collapsed_sidebar(
         } else if workspace.focused {
             buffer.set_style(rect, Style::default().bg(active_background));
         }
+        let accent = workspace_accent(workspace);
         let number_style = if selected {
             Style::default()
                 .fg(palette.overlay1)
                 .bg(selection_background)
         } else if workspace.focused {
-            Style::default().fg(palette.text).bg(active_background)
+            // A colored focused workspace shows its number on its color, like the focused tab.
+            accent.map_or(
+                Style::default().fg(palette.text).bg(active_background),
+                |accent| {
+                    Style::default()
+                        .fg(accent.contrast_fg())
+                        .bg(accent.to_ratatui())
+                },
+            )
         } else {
-            Style::default().fg(palette.overlay0)
+            Style::default()
+                .fg(accent.map_or(palette.overlay0, |accent| accent.foreground(palette)))
         };
         put_text(
             buffer,
@@ -148,17 +158,29 @@ pub(crate) fn render_collapsed_sidebar(
         if agent.focused {
             buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
         }
+        let accent = snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == agent.workspace_id)
+            .and_then(workspace_accent);
         put_text(
             buffer,
             rect.x,
             rect.y,
             rect.width.min(2),
             &format!("{:<2}", index + 1),
-            Style::default().fg(if agent.focused {
-                palette.text
-            } else {
-                palette.overlay0
-            }),
+            match accent {
+                // A colored focused agent shows its number on its color, like the focused tab.
+                Some(accent) if agent.focused => Style::default()
+                    .fg(accent.contrast_fg())
+                    .bg(accent.to_ratatui()),
+                Some(accent) => Style::default().fg(accent.foreground(palette)),
+                None => Style::default().fg(if agent.focused {
+                    palette.text
+                } else {
+                    palette.overlay0
+                }),
+            },
         );
         put_text(
             buffer,
@@ -334,6 +356,7 @@ pub(crate) fn render_sidebar(
             dragged,
             palette,
         );
+        paint_accent_marker(buffer, rect, workspace_accent(workspace), palette);
         let group_toggle = render_parent_group_toggle(
             buffer,
             rect,

@@ -1082,6 +1082,13 @@
             "agent_status": {
               "$ref": "#/schemas/event/$defs/AgentStatus"
             },
+            "color": {
+              "description": "Lowercase `#rrggbb` accent color, when one is set.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "focused": {
               "type": "boolean"
             },
@@ -4512,6 +4519,24 @@
           ],
           "type": "object"
         },
+        "WorkspaceSetColorParams": {
+          "properties": {
+            "color": {
+              "description": "`#rrggbb`, `#rgb`, a swatch name (rose, orange, yellow, green, teal, sky,\nviolet, pink), or `random` for the least-used swatch. Absent or null clears.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id"
+          ],
+          "type": "object"
+        },
         "WorkspaceTarget": {
           "properties": {
             "workspace_id": {
@@ -4993,6 +5018,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/WorkspaceRenameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.set_color",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceSetColorParams"
             }
           },
           "required": [
@@ -10580,6 +10621,13 @@
             },
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
+            },
+            "color": {
+              "description": "Lowercase `#rrggbb` accent color, when one is set.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "focused": {
               "type": "boolean"

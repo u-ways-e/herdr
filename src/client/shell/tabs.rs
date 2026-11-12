@@ -101,9 +101,14 @@ pub(crate) fn render_tab_bar(
         }
         let rect = Rect::new(x, area.y, width, 1);
         let style = if tab.focused {
-            let base = Style::default()
-                .fg(panel_contrast_fg(palette))
-                .bg(palette.accent);
+            let base = match focused_workspace_accent(snapshot) {
+                Some(accent) => Style::default()
+                    .fg(accent.contrast_fg())
+                    .bg(accent.to_ratatui()),
+                None => Style::default()
+                    .fg(panel_contrast_fg(palette))
+                    .bg(palette.accent),
+            };
             if tab.custom_label {
                 base.add_modifier(Modifier::BOLD)
             } else {

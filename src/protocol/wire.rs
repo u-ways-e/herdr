@@ -1025,6 +1025,9 @@ pub struct ClientShellWorkspace {
     pub number: usize,
     pub label: String,
     pub custom_label: bool,
+    /// Lowercase `#rrggbb` accent color. Clients parse it leniently and ignore invalid values.
+    #[serde(default)]
+    pub color: Option<String>,
     pub branch: Option<String>,
     pub git_ahead_behind: Option<(usize, usize)>,
     pub tokens: Vec<(String, String)>,
@@ -2824,6 +2827,7 @@ mod tests {
                 number: 1,
                 label: "shell".into(),
                 custom_label: false,
+                color: Some("#59d4cd".into()),
                 branch: Some("main".into()),
                 git_ahead_behind: None,
                 tokens: Vec::new(),

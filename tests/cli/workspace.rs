@@ -78,6 +78,24 @@ fn workspace_and_pane_management_commands_work() {
     let renamed_json: serde_json::Value = serde_json::from_slice(&renamed.stdout).unwrap();
     assert_eq!(renamed_json["result"]["workspace"]["label"], "demo");
 
+    let colored = run_cli(&socket_path, &["workspace", "color", &workspace_id, "Teal"]);
+    assert!(
+        colored.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&colored.stderr)
+    );
+    let colored_json: serde_json::Value = serde_json::from_slice(&colored.stdout).unwrap();
+    assert_eq!(colored_json["result"]["workspace"]["color"], "#59d4cd");
+
+    let invalid_color = run_cli(&socket_path, &["workspace", "color", &workspace_id, "cyan"]);
+    assert!(!invalid_color.status.success());
+    assert!(String::from_utf8_lossy(&invalid_color.stderr).contains("invalid_workspace_color"));
+
+    let cleared = run_cli(&socket_path, &["workspace", "color", &workspace_id, "none"]);
+    assert!(cleared.status.success());
+    let cleared_json: serde_json::Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert!(cleared_json["result"]["workspace"].get("color").is_none());
+
     let focused = run_cli(&socket_path, &["workspace", "focus", &workspace_id]);
     assert!(focused.status.success());
 

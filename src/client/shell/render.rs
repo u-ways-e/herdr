@@ -308,6 +308,16 @@ pub(super) fn render_shell(
                 &mut hits,
             );
         }
+        // With the tab bar, the tinted separator frames the pane the user types in.
+        if let Some(accent) = focused_workspace_accent(snapshot) {
+            let separator_x = layout.sidebar.right().saturating_sub(1);
+            let fg = accent.foreground(&config.palette);
+            for y in layout.sidebar.y..layout.sidebar.bottom() {
+                if let Some(cell) = buffer.cell_mut((separator_x, y)) {
+                    cell.set_fg(fg);
+                }
+            }
+        }
     }
     if layout.tab_bar.height > 0 {
         render_tab_bar(

@@ -106,6 +106,7 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
         number: 2,
         label: "repo-feature".into(),
         custom_label: false,
+        color: None,
         branch: Some("worktree/feature".into()),
         git_ahead_behind: None,
         tokens: Vec::new(),
@@ -850,6 +851,158 @@ fn workspace_state_text_does_not_stack_terminal_faint() {
         !cell.modifier.contains(Modifier::DIM),
         "workspace state text at ({x},{y}) should not stack terminal faint: {cell:?}"
     );
+}
+
+#[test]
+fn workspace_color_marks_its_sidebar_and_agent_rows() {
+    use crate::config::SpaceSidebarToken;
+    use ratatui::style::Color;
+
+    let teal = Color::Rgb(0x59, 0xd4, 0xcd);
+    let mut config = Config::default();
+    config.ui.sidebar.spaces.rows = vec![
+        vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
+        vec![SpaceSidebarToken::StateText],
+    ];
+    let mut projected = snapshot();
+    projected.workspaces[0].color = Some("#59d4cd".into());
+    projected.workspaces.push(ClientShellWorkspace {
+        workspace_id: "ws_2".into(),
+        number: 2,
+        label: "plain".into(),
+        color: None,
+        focused: false,
+        ..projected.workspaces[0].clone()
+    });
+    projected.workspaces.push(ClientShellWorkspace {
+        workspace_id: "ws_3".into(),
+        number: 3,
+        label: "rose".into(),
+        color: Some("#fca0a7".into()),
+        focused: false,
+        ..projected.workspaces[0].clone()
+    });
+    let agent = |pane_id: &str, workspace_id: &str, focused| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: workspace_id.into(),
+        tab_id: "tab_1".into(),
+        name: Some(format!("agent-{pane_id}")),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused,
+    };
+    projected.agents = vec![
+        agent("pane_1", "ws_1", true),
+        agent("pane_2", "ws_2", false),
+        agent("pane_3", "ws_1", false),
+    ];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected.clone()));
+    state.set_pane_surface(surface());
+    let palette = state.config.palette.clone();
+
+    let frame = state.compose(106, 30).expect("expanded sidebar frame");
+    let buffer = frame.to_ratatui_buffer().expect("expanded sidebar buffer");
+    let workspace_rect = |workspace_id: &str| {
+        state
+            .hits
+            .workspaces
+            .iter()
+            .find(|hit| hit.workspace_id == workspace_id)
+            .expect("workspace row")
+            .rect
+    };
+    let agent_rect = |pane_id: &str| {
+        state
+            .hits
+            .agents
+            .iter()
+            .find(|(_, hit)| hit == pane_id)
+            .expect("agent row")
+            .0
+    };
+    let colored = workspace_rect("ws_1");
+    assert_eq!(colored.height, 2);
+    for y in colored.y..colored.bottom() {
+        let cell = &buffer[(colored.x, y)];
+        assert_eq!(
+            (cell.symbol(), cell.fg, cell.bg),
+            ("▌", teal, palette.active_row_bg)
+        );
+    }
+    let plain = workspace_rect("ws_2");
+    assert_eq!(buffer[(plain.x, plain.y)].symbol(), " ");
+    let colored_agent = agent_rect("pane_1");
+    for y in colored_agent.y..colored_agent.bottom() {
+        let cell = &buffer[(colored_agent.x, y)];
+        assert_eq!(
+            (cell.symbol(), cell.fg, cell.bg),
+            ("▌", teal, palette.active_row_bg)
+        );
+    }
+    let plain_agent = agent_rect("pane_2");
+    assert_eq!(buffer[(plain_agent.x, plain_agent.y)].symbol(), " ");
+
+    state.sidebar_collapsed = true;
+    let frame = state.compose(106, 30).expect("collapsed sidebar frame");
+    let buffer = frame.to_ratatui_buffer().expect("collapsed sidebar buffer");
+    let black = Color::Rgb(0, 0, 0);
+    // The focused colored workspace keeps a focus cue: its number sits on its color.
+    let colored = state.hits.workspaces[0].rect;
+    let cell = &buffer[(colored.x, colored.y)];
+    assert_eq!((cell.symbol(), cell.fg, cell.bg), ("1", black, teal));
+    let plain = state.hits.workspaces[1].rect;
+    assert_eq!(buffer[(plain.x, plain.y)].fg, palette.overlay0);
+    let rose = state.hits.workspaces[2].rect;
+    let cell = &buffer[(rose.x, rose.y)];
+    assert_eq!(
+        (cell.symbol(), cell.fg),
+        ("3", Color::Rgb(0xfc, 0xa0, 0xa7))
+    );
+    let agent_number = |pane_id: &str| {
+        let rect = state
+            .hits
+            .agents
+            .iter()
+            .find(|(_, hit)| hit == pane_id)
+            .expect("collapsed agent row")
+            .0;
+        let cell = &buffer[(rect.x, rect.y)];
+        (cell.fg, cell.bg)
+    };
+    // Two agents of one colored workspace stay apart: only the focused one sits on it.
+    assert_eq!(agent_number("pane_1"), (black, teal));
+    assert_eq!(agent_number("pane_3").0, teal);
+    assert_ne!(agent_number("pane_3").1, teal);
+    assert_eq!(agent_number("pane_2").0, palette.overlay0);
+
+    // Light themes darken the color where it is drawn as a glyph or text.
+    config.theme.name = Some("catppuccin-latte".into());
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let palette = state.config.palette.clone();
+    let light_teal = WorkspaceColor::parse("teal").unwrap().foreground(&palette);
+    assert_ne!(light_teal, teal);
+    let frame = state.compose(106, 30).expect("light sidebar frame");
+    let buffer = frame.to_ratatui_buffer().expect("light sidebar buffer");
+    let colored = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == "ws_1")
+        .expect("workspace row")
+        .rect;
+    assert_eq!(buffer[(colored.x, colored.y)].fg, light_teal);
+    let divider = state.hits.sidebar_divider;
+    assert_eq!(buffer[(divider.x, divider.y)].fg, light_teal);
 }
 
 #[test]

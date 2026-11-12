@@ -84,6 +84,7 @@ pub(super) fn snapshot_with_completions(
                 number: workspace.number,
                 label: workspace.label,
                 custom_label: state.custom_name.is_some(),
+                color: workspace.color,
                 branch: state.branch(),
                 git_ahead_behind: state.git_ahead_behind(),
                 tokens,
@@ -751,6 +752,32 @@ mod tests {
             )),
             Some(("0.8.3", "### Changed\n- Client shell", true))
         );
+    }
+
+    #[test]
+    fn snapshot_projects_workspace_colors_as_hex() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let mut colored = crate::workspace::Workspace::test_new("colored");
+        colored.color = crate::workspace::color::WorkspaceColor::parse("Teal");
+        app.state.workspaces = vec![colored, crate::workspace::Workspace::test_new("plain")];
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+
+        let snapshot = snapshot(&app, "boot", 1, None, None);
+
+        let colors = snapshot
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.color.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(colors, [Some("#59d4cd"), None]);
     }
 
     #[test]

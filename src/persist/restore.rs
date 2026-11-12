@@ -411,10 +411,19 @@ fn restore_workspace(
         return (None, failed_imports);
     }
 
+    let color = snap.color.as_deref().and_then(|value| {
+        let color = crate::workspace::color::WorkspaceColor::parse(value);
+        if color.is_none() {
+            warn!(workspace_id = %workspace_id, color = value, "ignoring invalid saved workspace color");
+        }
+        color
+    });
+
     (
         Some(Workspace {
             id: workspace_id,
             custom_name: snap.custom_name.clone(),
+            color,
             identity_cwd: snap.identity_cwd.clone(),
             cached_identity_cwd: snap.identity_cwd.clone(),
             // Repository metadata is optional and may block on unavailable
@@ -1530,6 +1539,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("workspace".into()),
                 custom_name: None,
+                color: None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
@@ -1611,6 +1621,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("w1".into()),
                 custom_name: None,
+                color: None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(10, 1), (20, 3)]),
@@ -1724,6 +1735,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("w1".into()),
                 custom_name: None,
+                color: None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(10, 1), (11, 2), (12, 3), (13, 4)]),
@@ -1801,12 +1813,80 @@ mod tests {
             .all(|detail| detail.pane_id != agent_pane));
     }
 
+    #[tokio::test]
+    async fn restore_parses_saved_workspace_colors_and_drops_invalid_ones() {
+        let cwd = std::env::current_dir().unwrap();
+        let workspace = |id: &str, color: &str| WorkspaceSnapshot {
+            id: Some(id.into()),
+            custom_name: None,
+            color: Some(color.into()),
+            identity_cwd: cwd.clone(),
+            worktree_space: None,
+            public_pane_numbers: HashMap::new(),
+            next_public_pane_number: 0,
+            public_tab_numbers: Vec::new(),
+            next_public_tab_number: 0,
+            tabs: vec![TabSnapshot {
+                custom_name: None,
+                layout: LayoutSnapshot::Pane(0),
+                panes: HashMap::from([(
+                    0,
+                    super::super::snapshot::PaneSnapshot {
+                        cwd: cwd.clone(),
+                        label: None,
+                        agent_name: None,
+                        managed_agent_kind: None,
+                        agent_session: None,
+                        agent_resume: None,
+                        launch_argv: None,
+                    },
+                )]),
+                zoomed: false,
+                focused: Some(0),
+                root_pane: Some(0),
+            }],
+            active_tab: 0,
+        };
+        let snapshot = SessionSnapshot {
+            version: super::super::snapshot::SNAPSHOT_VERSION,
+            workspaces: vec![workspace("w1", "#59D4CD"), workspace("w2", "not-a-color")],
+            active: Some(0),
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: Default::default(),
+        };
+        let (events, _event_rx) = mpsc::channel(4);
+
+        let (workspaces, _terminals, _runtimes) = restore(
+            &snapshot,
+            None,
+            24,
+            80,
+            0,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(RenderSignal::new()),
+        );
+
+        assert_eq!(workspaces.len(), 2);
+        assert_eq!(
+            workspaces[0].color,
+            crate::workspace::color::WorkspaceColor::parse("teal")
+        );
+        assert_eq!(workspaces[1].color, None);
+    }
+
     #[test]
     fn legacy_restore_precomputes_missing_public_pane_numbers() {
         let cwd = std::env::current_dir().unwrap();
         let snapshot = WorkspaceSnapshot {
             id: Some("w1".into()),
             custom_name: None,
+            color: None,
             identity_cwd: cwd,
             worktree_space: None,
             public_pane_numbers: HashMap::new(),
@@ -1846,6 +1926,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("workspace".into()),
                 custom_name: None,
+                color: None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
@@ -2202,6 +2283,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("workspace".into()),
                 custom_name: None,
+                color: None,
                 identity_cwd: cwd,
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),

@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCloseParams,
     WorkspaceCreateParams, WorkspaceMoveBlockParams, WorkspaceMoveParams, WorkspaceRenameParams,
-    WorkspaceReportMetadataParams, WorkspaceTarget,
+    WorkspaceReportMetadataParams, WorkspaceSetColorParams, WorkspaceTarget,
 };
 use crate::app::App;
+use crate::workspace::color::{WorkspaceColor, SWATCHES};
 
 use super::super::api_helpers::{normalize_metadata_source, normalize_metadata_ttl};
 use super::responses::{encode_error, encode_success};
@@ -122,6 +123,49 @@ impl App {
                 label: params.label,
             },
         });
+
+        encode_success(
+            id,
+            ResponseResult::WorkspaceInfo {
+                workspace: self.workspace_info(index),
+            },
+        )
+    }
+
+    pub(super) fn handle_workspace_set_color(
+        &mut self,
+        id: String,
+        params: WorkspaceSetColorParams,
+    ) -> String {
+        let Some(index) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        let color = match params.color.as_deref().map(str::trim) {
+            None => None,
+            Some(value) if value.eq_ignore_ascii_case("random") => Some(
+                self.state
+                    .least_used_workspace_color(index, Some(color_tie_break_seed())),
+            ),
+            Some(value) => match WorkspaceColor::parse(value) {
+                Some(color) => Some(color),
+                None => {
+                    return encode_error(
+                        id,
+                        "invalid_workspace_color",
+                        format!(
+                            "invalid workspace color {value:?}; expected #rrggbb, #rgb, random, or one of: {}",
+                            SWATCHES.map(|(name, _)| name).join(", ")
+                        ),
+                    );
+                }
+            },
+        };
+        let Some(ws) = self.state.workspaces.get_mut(index) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        ws.color = color;
+        self.schedule_session_save();
+        self.emit_workspace_updated(index);
 
         encode_success(
             id,
@@ -369,6 +413,13 @@ impl App {
     }
 }
 
+/// Tie-break seed for `random` colors; Herdr has no RNG dependency. Std's
+/// randomly keyed hasher mixes every bit, unlike coarse clock nanoseconds.
+fn color_tie_break_seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    std::hash::RandomState::new().build_hasher().finish()
+}
+
 fn workspace_not_found(id: String, workspace_id: &str) -> String {
     encode_error(
         id,
@@ -385,6 +436,14 @@ mod tests {
         config::Config,
         workspace::Workspace,
     };
+
+    #[test]
+    fn color_tie_break_seed_varies_in_its_low_bits() {
+        // `random` picks `seed % tied`; fixed low bits would pin it whenever 2, 4 or 8 tie.
+        let picks: std::collections::HashSet<_> =
+            (0..64).map(|_| color_tie_break_seed() % 8).collect();
+        assert!(picks.len() > 1, "seeds always pick {picks:?}");
+    }
 
     // `new_cwd = follow` must anchor on the focused pane for every creation
     // surface. Splits and tabs already do; a new workspace must follow the
@@ -555,6 +614,52 @@ mod tests {
         );
         shutdown_test_runtimes(&mut app);
         let _ = std::fs::remove_dir_all(&source_cwd);
+    }
+
+    #[tokio::test]
+    async fn workspace_create_auto_assigns_least_used_color_when_enabled() {
+        use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
+        use crate::config::ShellModeConfig;
+
+        let mut config = Config::default();
+        config.ui.auto_workspace_colors = true;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.workspaces = vec![Workspace::test_new("first")];
+        app.state.workspaces[0].color = WorkspaceColor::parse("rose");
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+
+        let response = app.handle_workspace_create(
+            "req".into(),
+            WorkspaceCreateParams {
+                source_workspace_id: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceCreated { workspace, .. } = success.result else {
+            panic!("unexpected create response: {response}");
+        };
+        assert_eq!(workspace.color.as_deref(), Some("#f2ad73"));
+        assert_eq!(
+            app.state.workspaces[1].color,
+            WorkspaceColor::parse("orange")
+        );
+        assert_eq!(app.state.workspaces[0].color, WorkspaceColor::parse("rose"));
+        shutdown_test_runtimes(&mut app);
     }
 
     fn app_with_linked_worktree() -> App {
@@ -975,6 +1080,105 @@ mod tests {
                 if workspace.tokens.get("summary").map(String::as_str) == Some("done")
                     && !workspace.tokens.contains_key("jj_status")
         )));
+    }
+
+    #[test]
+    fn workspace_set_color_sets_random_clears_and_emits_update() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        let rose = WorkspaceColor::parse("rose").unwrap();
+        app.state.workspaces[1].color = Some(rose);
+        let workspace_id = app.public_workspace_id(0);
+        let mut set_color = |color: Option<&str>| {
+            let request = crate::api::schema::Request {
+                id: "req".into(),
+                method: crate::api::schema::Method::WorkspaceSetColor(WorkspaceSetColorParams {
+                    workspace_id: workspace_id.clone(),
+                    color: color.map(str::to_string),
+                }),
+            };
+            assert!(crate::api::request_changes_ui(&request));
+            let response = app.handle_api_request(request);
+            match serde_json::from_str::<SuccessResponse>(&response)
+                .unwrap()
+                .result
+            {
+                ResponseResult::WorkspaceInfo { workspace } => workspace.color,
+                other => panic!("unexpected result {other:?}"),
+            }
+        };
+
+        assert_eq!(set_color(Some("#59D4CD")).as_deref(), Some("#59d4cd"));
+        assert_eq!(set_color(Some(" Violet ")).as_deref(), Some("#bcb2ff"));
+        assert_eq!(set_color(Some("#f0a")).as_deref(), Some("#ff00aa"));
+
+        // `random` resolves on the server to a swatch the other workspace is not
+        // using, and never repeats the workspace's current color.
+        let mut previous = set_color(Some("orange"));
+        for _ in 0..8 {
+            let picked = set_color(Some("random"));
+            let color = picked.as_deref().and_then(WorkspaceColor::parse).unwrap();
+            assert!(SWATCHES.iter().any(|&(_, swatch)| swatch == color));
+            assert_ne!(color, rose);
+            assert_ne!(picked, previous);
+            previous = picked;
+        }
+
+        assert_eq!(set_color(None), None);
+        assert_eq!(app.state.workspaces[0].color, None);
+        assert_eq!(app.state.workspaces[1].color, Some(rose));
+        assert!(event_hub.events_after(0).iter().any(|(_, event)| matches!(
+            &event.data,
+            EventData::WorkspaceUpdated { workspace }
+                if workspace.color.as_deref() == Some("#59d4cd")
+        )));
+    }
+
+    #[test]
+    fn workspace_set_color_rejects_invalid_colors_and_unknown_workspaces() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.workspaces[0].color = WorkspaceColor::parse("teal");
+
+        for invalid in ["cyan", "", "#12345", "rgb(1,2,3)"] {
+            let response = app.handle_workspace_set_color(
+                "req".into(),
+                WorkspaceSetColorParams {
+                    workspace_id: app.public_workspace_id(0),
+                    color: Some(invalid.into()),
+                },
+            );
+            let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+            assert_eq!(error.error.code, "invalid_workspace_color", "{invalid:?}");
+            assert!(error.error.message.contains("#rrggbb, #rgb, random"));
+            assert!(error.error.message.contains("rose, orange, yellow"));
+        }
+        assert_eq!(app.state.workspaces[0].color, WorkspaceColor::parse("teal"));
+
+        let response = app.handle_workspace_set_color(
+            "req".into(),
+            WorkspaceSetColorParams {
+                workspace_id: "w_999".into(),
+                color: Some("teal".into()),
+            },
+        );
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "workspace_not_found");
     }
 
     #[test]

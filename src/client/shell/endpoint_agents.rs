@@ -37,6 +37,12 @@ pub(super) fn render_collapsed(
                     Modifier::empty()
                 }),
         );
+        // The machine initial takes the workspace color, like the single-machine agent number.
+        if let Some(accent) = row.agent.accent.filter(|_| !row.stale && rect.width > 0) {
+            if let Some(cell) = buffer.cell_mut((rect.x, rect.y)) {
+                cell.set_fg(accent.foreground(&config.palette));
+            }
+        }
         hits.endpoint_agents
             .push((rect, row.endpoint_id, row.agent.pane_id));
     }

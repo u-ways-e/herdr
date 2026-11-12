@@ -378,6 +378,208 @@ fn context_menus_capture_stable_targets_and_route_actions() {
 }
 
 #[test]
+fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
+    use crate::api::schema::Method;
+    use ratatui::style::Color;
+
+    let sky = WorkspaceColor::parse("sky");
+    let mut projected = snapshot();
+    projected.workspaces[0].color = sky.map(WorkspaceColor::to_hex);
+    projected.workspaces.push(ClientShellWorkspace {
+        workspace_id: "ws_2".into(),
+        number: 2,
+        color: None,
+        focused: false,
+        ..projected.workspaces[0].clone()
+    });
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let click = |state: &mut ClientShellState, button, rect: Rect| {
+        state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(button),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        })])
+    };
+    let open_color_menu = |state: &mut ClientShellState, workspace_index: usize| {
+        state.overlay = None;
+        state.compose(106, 20).expect("composed frame");
+        let workspace = state.hits.workspaces[workspace_index].rect;
+        click(state, MouseButton::Right, workspace);
+        let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+            panic!("workspace context menu");
+        };
+        let position = (menu.x, menu.y);
+        let items = menu.items();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.label)
+                .take(3)
+                .collect::<Vec<_>>(),
+            ["Rename", "Close", "Color..."]
+        );
+        assert_eq!(items[2].action, ClientContextMenuAction::Color);
+        state.compose(106, 20).expect("workspace context menu");
+        let color_row = state.hits.context_menu_rows[2].0;
+        let outcome = click(state, MouseButton::Left, color_row);
+        assert!(outcome.actions.is_empty());
+        let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+            panic!("color menu should replace the workspace menu");
+        };
+        assert_eq!((menu.x, menu.y), position);
+    };
+
+    open_color_menu(&mut state, 0);
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("color menu");
+    };
+    assert!(matches!(
+        &menu.target,
+        ClientContextMenuTarget::WorkspaceColor { workspace_id, current }
+            if workspace_id == "ws_1" && *current == sky
+    ));
+    assert_eq!(menu.highlighted, 5, "the current swatch starts highlighted");
+    assert_eq!(
+        menu.items()
+            .iter()
+            .map(|item| item.label)
+            .collect::<Vec<_>>(),
+        ["rose", "orange", "yellow", "green", "teal", "sky", "violet", "pink", "Random", "Clear"]
+    );
+    let frame = state.compose(106, 20).expect("color menu");
+    let buffer = frame.to_ratatui_buffer().expect("color menu buffer");
+    let rows = state.hits.context_menu_rows.clone();
+    let teal_row = rows[4].0;
+    let dot = &buffer[(teal_row.x, teal_row.y)];
+    assert_eq!(
+        (dot.symbol(), dot.fg, dot.bg),
+        (
+            "●",
+            Color::Rgb(0x59, 0xd4, 0xcd),
+            state.config.palette.panel_bg
+        )
+    );
+    let row_text = |row: Rect| {
+        (row.x..row.right())
+            .map(|x| buffer[(x, row.y)].symbol())
+            .collect::<String>()
+    };
+    assert_eq!(row_text(teal_row).trim_end(), "● teal");
+    assert_eq!(row_text(rows[5].0).trim_end(), "● sky ✓");
+    // The highlighted current swatch previews its own color, so its dot stays visible.
+    let sky_row = rows[5].0;
+    for x in sky_row.x..sky_row.right() {
+        let cell = &buffer[(x, sky_row.y)];
+        assert_eq!(
+            (cell.fg, cell.bg),
+            (Color::Rgb(0, 0, 0), Color::Rgb(0x71, 0xc9, 0xfa))
+        );
+    }
+    assert_eq!(row_text(rows[8].0).trim_end(), "Random");
+
+    let outcome = click(&mut state, MouseButton::Left, teal_row);
+    assert!(state.overlay.is_none());
+    let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+        panic!("swatch should use the endpoint API");
+    };
+    assert!(matches!(
+        &request.method,
+        Method::WorkspaceSetColor(params)
+            if params.workspace_id == "ws_1" && params.color.as_deref() == Some("#59d4cd")
+    ));
+
+    for (index, expected) in [(8, Some("random")), (9, None)] {
+        open_color_menu(&mut state, 0);
+        let mut outcome = ClientShellInput::default();
+        state.activate_context_menu_item(index, &mut outcome);
+        assert!(matches!(
+            outcome.actions.as_slice(),
+            [ClientShellAction::Endpoint { request, .. }]
+                if matches!(&request.method, Method::WorkspaceSetColor(params)
+                    if params.workspace_id == "ws_1" && params.color.as_deref() == expected)
+        ));
+    }
+
+    open_color_menu(&mut state, 1);
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("uncolored workspace color menu");
+    };
+    assert_eq!(menu.highlighted, 0);
+    let items = menu.items();
+    assert_eq!(
+        items.len(),
+        9,
+        "Clear is only offered for a colored workspace"
+    );
+    assert_eq!(items[8].action, ClientContextMenuAction::RandomColor);
+}
+
+#[test]
+fn focused_workspace_color_tints_the_active_tab_and_sidebar_separator() {
+    use ratatui::style::Color;
+
+    let teal = Color::Rgb(0x59, 0xd4, 0xcd);
+    let mut projected = snapshot();
+    projected.workspaces[0].color = Some("#59d4cd".into());
+    projected.tabs.push(ClientShellTab {
+        tab_id: "tab_2".into(),
+        number: 2,
+        label: "2".into(),
+        focused: false,
+        ..projected.tabs[0].clone()
+    });
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let palette = state.config.palette.clone();
+    let tab_rect = |state: &ClientShellState, tab_id: &str| {
+        state
+            .hits
+            .tabs
+            .iter()
+            .find(|(_, hit)| hit == tab_id)
+            .expect("tab hit")
+            .0
+    };
+
+    let frame = state.compose(80, 20).expect("colored chrome");
+    let buffer = frame.to_ratatui_buffer().expect("colored chrome buffer");
+    let focused = tab_rect(&state, "tab_1");
+    for x in focused.x..focused.right() {
+        let cell = &buffer[(x, focused.y)];
+        assert_eq!((cell.fg, cell.bg), (Color::Rgb(0, 0, 0), teal));
+    }
+    let other = tab_rect(&state, "tab_2");
+    assert_eq!(buffer[(other.x, other.y)].bg, palette.surface0);
+    let divider = state.hits.sidebar_divider;
+    assert!(divider.height > 0);
+    for y in divider.y..divider.bottom() {
+        let cell = &buffer[(divider.x, y)];
+        assert_eq!((cell.symbol(), cell.fg), ("│", teal));
+    }
+
+    // A color this client cannot parse draws no accent rather than failing.
+    let mut update = state.snapshot.as_deref().expect("snapshot").clone();
+    update.workspaces[0].color = Some("cyan".into());
+    state.set_snapshot(Box::new(update));
+    let frame = state.compose(80, 20).expect("fallback chrome");
+    let buffer = frame.to_ratatui_buffer().expect("fallback chrome buffer");
+    let focused = tab_rect(&state, "tab_1");
+    let cell = &buffer[(focused.x, focused.y)];
+    assert_eq!(
+        (cell.fg, cell.bg),
+        (panel_contrast_fg(&palette), palette.accent)
+    );
+    let divider = state.hits.sidebar_divider;
+    assert_eq!(buffer[(divider.x, divider.y)].fg, palette.surface_dim);
+    let workspace = state.hits.workspaces[0].rect;
+    assert_eq!(buffer[(workspace.x, workspace.y)].symbol(), " ");
+}
+
+#[test]
 fn global_menu_opens_from_sidebar_and_routes_client_actions() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

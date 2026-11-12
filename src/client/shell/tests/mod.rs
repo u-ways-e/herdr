@@ -34,6 +34,7 @@ pub(super) fn snapshot() -> ClientShellSnapshot {
             number: 1,
             label: "client-shell".into(),
             custom_label: false,
+            color: None,
             branch: Some("main".into()),
             git_ahead_behind: None,
             tokens: Vec::new(),

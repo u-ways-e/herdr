@@ -512,6 +512,11 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 pub(super) enum ClientContextMenuAction {
     Rename,
     Close,
+    Color,
+    /// Index into [`crate::workspace::color::SWATCHES`].
+    SetColor(u8),
+    RandomColor,
+    ClearColor,
     NewWorktree,
     OpenWorktree,
     RemoveWorktree,
@@ -536,6 +541,10 @@ pub(super) enum ClientContextMenuTarget {
         has_worktree_children: bool,
         close_group: bool,
         collapsed: bool,
+    },
+    WorkspaceColor {
+        workspace_id: String,
+        current: Option<WorkspaceColor>,
     },
     Tab {
         tab_id: String,

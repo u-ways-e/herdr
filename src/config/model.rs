@@ -1003,6 +1003,8 @@ pub struct UiConfig {
     /// Accent color for highlights, borders, and navigation UI.
     /// Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250)).
     pub accent: String,
+    /// Give each newly created workspace the least-used color swatch. Default: false.
+    pub auto_workspace_colors: bool,
     /// Optional visual toast notifications for background workspace events.
     pub toast: ToastConfig,
     /// Play sounds when agents change state in background workspaces.
@@ -1228,6 +1230,7 @@ impl Default for UiConfig {
             status_indicators: StatusIndicatorStyle::Dots,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
+            auto_workspace_colors: false,
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
         }
@@ -1604,6 +1607,19 @@ prompt_new_workspace_name = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.ui.prompt_new_workspace_name);
+    }
+
+    #[test]
+    fn auto_workspace_colors_defaults_off_and_parses() {
+        let default_config = Config::default();
+        assert!(!default_config.ui.auto_workspace_colors);
+
+        let toml = r#"
+[ui]
+auto_workspace_colors = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.ui.auto_workspace_colors);
     }
 
     #[test]

@@ -54,6 +54,9 @@ pub struct WorkspaceSnapshot {
     pub id: Option<String>,
     #[serde(default)]
     pub custom_name: Option<String>,
+    /// Lowercase `#rrggbb`; absent when the workspace has no color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     pub identity_cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
@@ -167,6 +170,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
         Self {
             id: None,
             custom_name: snap.custom_name,
+            color: None,
             identity_cwd,
             worktree_space: None,
             public_pane_numbers: HashMap::new(),
@@ -305,6 +309,9 @@ fn capture_workspace(
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
         custom_name: ws.custom_name.clone(),
+        color: ws
+            .color
+            .map(crate::workspace::color::WorkspaceColor::to_hex),
         identity_cwd,
         worktree_space: ws.worktree_space.clone(),
         public_pane_numbers: ws
@@ -409,6 +416,16 @@ pub(super) fn layout_fingerprint(snapshot: &SessionSnapshot) -> Option<String> {
     let mut collapsed: Vec<_> = snapshot.collapsed_space_keys.iter().collect();
     collapsed.sort_unstable();
     value["collapsed_space_keys"] = serde_json::to_value(collapsed).ok()?;
+    // Colors are not layout, and older binaries drop them on load; hashing them
+    // would make those binaries discard this session's pane history.
+    if let Some(workspaces) = value["workspaces"].as_array_mut() {
+        for workspace in workspaces
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            workspace.remove("color");
+        }
+    }
     let bytes = serde_json::to_vec(&value).ok()?;
     Some(format!("{:x}", Sha256::digest(bytes)))
 }
@@ -654,6 +671,17 @@ mod tests {
     }
 
     #[test]
+    fn layout_fingerprint_ignores_workspace_colors() {
+        let mut snapshot = parse_snapshot(include_str!(
+            "../../tests/fixtures/session/current-herdr-session.json"
+        ))
+        .unwrap();
+        let uncolored = layout_fingerprint(&snapshot).unwrap();
+        snapshot.workspaces[0].color = Some("#59d4cd".to_string());
+        assert_eq!(layout_fingerprint(&snapshot).unwrap(), uncolored);
+    }
+
+    #[test]
     fn round_trip_empty_session() {
         let snap = SessionSnapshot {
             version: SNAPSHOT_VERSION,
@@ -726,6 +754,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
+                color: None,
                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
@@ -953,6 +982,25 @@ mod tests {
             snapshot.workspaces[0].worktree_space,
             state.workspaces[0].worktree_space
         );
+    }
+
+    #[test]
+    fn workspace_color_round_trips_and_older_snapshots_decode_without_it() {
+        let older = parse_snapshot(session_fixture("current-herdr")).unwrap();
+        assert!(older
+            .workspaces
+            .iter()
+            .all(|workspace| workspace.color.is_none()));
+
+        let mut state = state_with_workspaces(&["colored", "plain"]);
+        state.workspaces[0].color = crate::workspace::color::WorkspaceColor::parse("#59D4CD");
+        let json = serde_json::to_value(capture_from_state(&state)).unwrap();
+        assert_eq!(json["workspaces"][0]["color"], "#59d4cd");
+        assert!(json["workspaces"][1].get("color").is_none());
+
+        let restored = parse_snapshot(&json.to_string()).unwrap();
+        assert_eq!(restored.workspaces[0].color.as_deref(), Some("#59d4cd"));
+        assert_eq!(restored.workspaces[1].color, None);
     }
 
     #[test]
@@ -1427,6 +1475,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("test-ws".to_string()),
                 custom_name: Some("fallback test".to_string()),
+                color: None,
                 identity_cwd: PathBuf::from("/tmp"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
